@@ -18,6 +18,9 @@
 #define MICRON_STATUS_ECC_4TO6_BITFLIPS	(3 << 4)
 #define MICRON_STATUS_ECC_7TO8_BITFLIPS	(5 << 4)
 
+/* For Micron MT29F2G01AAAED Device */
+#define MICRON_STATUS_ECC_1TO4_BITFLIPS	(1 << 4)
+
 #define MICRON_CFG_CR			BIT(0)
 
 /*
@@ -42,6 +45,19 @@ static SPINAND_OP_VARIANTS(write_cache_variants,
 
 static SPINAND_OP_VARIANTS(update_cache_variants,
 		SPINAND_PROG_LOAD_X4(false, 0, NULL, 0),
+		SPINAND_PROG_LOAD(false, 0, NULL, 0));
+
+/* Micron  MT29F2G01AAAED Device */
+static SPINAND_OP_VARIANTS(read_cache_variants_mt29f2g01aaaed,
+		SPINAND_PAGE_READ_FROM_CACHE_X4_OP(0, 1, NULL, 0),
+		SPINAND_PAGE_READ_FROM_CACHE_X2_OP(0, 1, NULL, 0),
+		SPINAND_PAGE_READ_FROM_CACHE_OP(true, 0, 1, NULL, 0),
+		SPINAND_PAGE_READ_FROM_CACHE_OP(false, 0, 1, NULL, 0));
+
+static SPINAND_OP_VARIANTS(write_cache_variants_mt29f2g01aaaed,
+		SPINAND_PROG_LOAD(true, 0, NULL, 0));
+
+static SPINAND_OP_VARIANTS(update_cache_variants_mt29f2g01aaaed,
 		SPINAND_PROG_LOAD(false, 0, NULL, 0));
 
 static int micron_8_ooblayout_ecc(struct mtd_info *mtd, int section,
@@ -69,9 +85,39 @@ static int micron_8_ooblayout_free(struct mtd_info *mtd, int section,
 	return 0;
 }
 
+static int mt29f2g01aaaed_ooblayout_ecc(struct mtd_info *mtd, int section,
+					struct mtd_oob_region *region)
+{
+	if (section >= 4)
+		return -ERANGE;
+
+	region->offset = (section * 16) + 8;
+	region->length = 8;
+
+	return 0;
+}
+
+static int mt29f2g01aaaed_ooblayout_free(struct mtd_info *mtd, int section,
+					 struct mtd_oob_region *region)
+{
+	if (section >= 4)
+		return -ERANGE;
+
+	/* Reserve 2 bytes for the BBM. */
+	region->offset = (section * 16) + 2;
+	region->length = 6;
+
+	return 0;
+}
+
 static const struct mtd_ooblayout_ops micron_8_ooblayout = {
 	.ecc = micron_8_ooblayout_ecc,
 	.free = micron_8_ooblayout_free,
+};
+
+static const struct mtd_ooblayout_ops mt29f2g01aaaed_ooblayout = {
+	.ecc = mt29f2g01aaaed_ooblayout_ecc,
+	.free = mt29f2g01aaaed_ooblayout_free,
 };
 
 static int micron_select_target(struct spinand_device *spinand,
@@ -106,6 +152,27 @@ static int micron_8_ecc_get_status(struct spinand_device *spinand,
 
 	case MICRON_STATUS_ECC_7TO8_BITFLIPS:
 		return 8;
+
+	default:
+		break;
+	}
+
+	return -EINVAL;
+}
+
+static int mt29f2g01aaaed_ecc_get_status(struct spinand_device *spinand,
+					 u8 status)
+{
+	switch (status & MICRON_STATUS_ECC_MASK) {
+	case STATUS_ECC_NO_BITFLIPS:
+		return 0;
+
+	case STATUS_ECC_UNCOR_ERROR:
+		return -EBADMSG;
+
+	/* 1 to 4-bit error detected and corrected */
+	case MICRON_STATUS_ECC_1TO4_BITFLIPS:
+		return 4;
 
 	default:
 		break;
@@ -217,6 +284,17 @@ static const struct spinand_info micron_spinand_table[] = {
 		     SPINAND_ECCINFO(&micron_8_ooblayout,
 				     micron_8_ecc_get_status),
 		     SPINAND_SELECT_TARGET(micron_select_target)),
+	/* M69A 2Gb 3.3V */
+	SPINAND_INFO("MT29F2G01AAAED",
+		     SPINAND_ID(SPINAND_READID_METHOD_OPCODE_DUMMY, 0x9F),
+		     NAND_MEMORG(1, 2048, 64, 64, 2048, 80, 2, 1, 1),
+		     NAND_ECCREQ(4, 512),
+		     SPINAND_INFO_OP_VARIANTS(&read_cache_variants_mt29f2g01aaaed,
+					      &write_cache_variants_mt29f2g01aaaed,
+					      &update_cache_variants_mt29f2g01aaaed),
+		     0,
+		     SPINAND_ECCINFO(&mt29f2g01aaaed_ooblayout,
+				     mt29f2g01aaaed_ecc_get_status),
 };
 
 static int micron_spinand_init(struct spinand_device *spinand)
